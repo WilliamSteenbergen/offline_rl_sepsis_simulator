@@ -306,8 +306,12 @@ class MDP(object):
 
     def select_actions(self):
         assert self.policy_array is not None
+        # print(self.policy_array)
+        # print(self.state.get_state_idx(self.policy_idx_type))
+
         probs = self.policy_array[
                     self.state.get_state_idx(self.policy_idx_type)
                 ]
+        # print(probs)
         aev_idx = np.random.choice(np.arange(Action.NUM_ACTIONS_TOTAL), p=probs)
         return Action(action_idx = aev_idx)

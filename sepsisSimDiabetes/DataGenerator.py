@@ -20,7 +20,7 @@ class DataGenerator(object):
 
     def simulate(self, num_iters, max_num_steps,
             policy=None, policy_idx_type='full', p_diabetes=0.2,
-            output_state_idx_type='obs', use_tqdm=False, tqdm_desc=''):
+            output_state_idx_type='obs', use_tqdm=False, tqdm_desc='', splits=False, split_df=None):
         '''
         policy is an array of probabilities
         '''
@@ -76,10 +76,19 @@ class DataGenerator(object):
                 iter_states[itr, step+1, 0] = this_to_state_idx
 
                 # Record in transition matrix
-                emp_tx_mat[this_action_idx,
-                       this_from_state_idx, this_to_state_idx] += 1
-                emp_r_mat[this_action_idx,
-                       this_from_state_idx, this_to_state_idx] += step_reward
+                if splits:
+                    if itr in split_df['Trajectory']:
+                        # print("succeed")
+                        emp_tx_mat[this_action_idx,
+                               this_from_state_idx, this_to_state_idx] += 1
+                        emp_r_mat[this_action_idx,
+                               this_from_state_idx, this_to_state_idx] += step_reward
+
+                else:
+                    emp_tx_mat[this_action_idx,
+                               this_from_state_idx, this_to_state_idx] += 1
+                    emp_r_mat[this_action_idx,
+                              this_from_state_idx, this_to_state_idx] += step_reward
 
                 if step_reward != 0:
                     iter_rewards[itr, step, 0] = step_reward

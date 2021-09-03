@@ -1,28 +1,18 @@
 import numpy as np
 import cf.counterfactual as cf
-import cf.utils as utils
 import pandas as pd
 import pickle
-import itertools as it
-from tqdm import tqdm_notebook as tqdm
-from scipy.linalg import block_diag
 import os
 
 # Sepsis Simulator code
 from sepsisSimDiabetes.State import State
 from sepsisSimDiabetes.Action import Action
 from sepsisSimDiabetes.DataGenerator import DataGenerator
-import sepsisSimDiabetes.MDP as simulator
-
-import mdptoolboxSrc.mdp as mdptools
-
-import matplotlib.pyplot as plt
-import seaborn as sns
 import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
 from scipy.linalg import block_diag
 
-from smartprimer_method_functions.wis import compute_is_weights_for_mdp_policy, wis_ope
+from AAAI_paper.smartprimer_method_functions.wis import compute_is_weights_for_mdp_policy, wis_ope
 
 SEED = 2  # Note this is not the only random seed, see the loop
 
@@ -56,7 +46,7 @@ discStateIdx = n_states_obs - 1
 deadStateIdx = n_states_obs - 2
 
 # Get the transition and reward matrix from file
-with open("../data/diab_txr_mats-replication.pkl", "rb") as f:
+with open("data/diab_txr_mats-replication.pkl", "rb") as f:
     mdict = pickle.load(f)
 
 tx_mat = mdict["tx_mat"]
@@ -149,13 +139,13 @@ def marginalize_policy(policy, EPS):
     marginalized_policy = marginalized_policy * (1-EPS) + EPS * (1/n_actions)
     return marginalized_policy
 
-def create_data_set(num_trajectories, beh_policy):
+def create_data_set(num_trajectories, beh_policy, high_vol=False):
     np.random.seed(1)
     dgen = DataGenerator()
 
-    states, actions, lengths, rewards, diab, emp_tx_totals, emp_r_totals = dgen.simulate(
+    states, actions, lengths, rewards, diab, emp_tx_totals, emp_r_totals, difficulties = dgen.simulate(
         num_trajectories, 20, policy=beh_policy, policy_idx_type='full', output_state_idx_type='full',
-        p_diabetes=PROB_DIAB, use_tqdm=False)
+        p_diabetes=PROB_DIAB, use_tqdm=False, high_vol=high_vol)
 
     output = {
         'states': states,
@@ -193,13 +183,14 @@ def create_data_set(num_trajectories, beh_policy):
                 row.append(rewards[i, j,0])
                 row.append(actions[i, j,0])
                 row += list(beh_policy[states[i, j,0], :])
+            row.append(difficulties[i])
 
             data_set_list.append(row)
 
     dataset = pd.DataFrame(data_set_list, columns=["Trajectory", "State_id", "hr_state", "sysbp_state", "glucose_state",
                                                    "antibiotic_state", "vaso_state", "vent_state", "Reward", "Action_taken", "beh_p_0",
                                                    "beh_p_1", "beh_p_2", "beh_p_3", "beh_p_4",
-                                                   "beh_p_5","beh_p_6","beh_p_7"])
+                                                   "beh_p_5","beh_p_6","beh_p_7", 'difficulty'])
 
     return dataset, output
 
@@ -212,7 +203,7 @@ def evaluate_policy(policy, policy_type='full'):
     if policy_type == "proj_obs" or policy_type == 'obs':
         policy = policy[:-2,:]
 
-    states, actions, lengths, rewards, diab, emp_tx_totals, emp_r_totals = dgen.simulate(
+    states, actions, lengths, rewards, diab, emp_tx_totals, emp_r_totals, difficulties = dgen.simulate(
         N_TRAJECTORIES, 20, policy=policy, policy_idx_type=policy_type, output_state_idx_type='full',
         p_diabetes=PROB_DIAB, use_tqdm=False)
 
@@ -265,7 +256,7 @@ def get_empirical_mdp(beh_policy, n_trajectories, do_splits=False, output=None, 
         np.random.seed(1)
         dgen = DataGenerator()
 
-        states, actions, lengths, rewards, diab, emp_tx_totals, emp_r_totals = dgen.simulate(
+        states, actions, lengths, rewards, diab, emp_tx_totals, emp_r_totals, difficulties = dgen.simulate(
             n_trajectories, 20, policy=beh_policy, policy_idx_type='full',
             p_diabetes=PROB_DIAB, use_tqdm=False, splits=True, split_df=split)
 
@@ -277,7 +268,7 @@ def get_empirical_mdp(beh_policy, n_trajectories, do_splits=False, output=None, 
     else:
         np.random.seed(1)
         dgen = DataGenerator()
-        states, actions, lengths, rewards, diab, emp_tx_totals, emp_r_totals = dgen.simulate(
+        states, actions, lengths, rewards, diab, emp_tx_totals, emp_r_totals, difficulties = dgen.simulate(
             n_trajectories, NSTEPS, policy=beh_policy, policy_idx_type='full',
             p_diabetes=PROB_DIAB, use_tqdm=False) #True, tqdm_desc='Behaviour Policy Simulation')
 
@@ -344,11 +335,16 @@ def get_empirical_mdp(beh_policy, n_trajectories, do_splits=False, output=None, 
 
     return MDP_pol
 
-def evaluate_all_policies():
-    for filename in os.listdir('Archive2/'):
-        if filename[-3:] == 'csv':
-            policy2evaluate = get_bcpg_policy("Archive2/" + filename)
-            print("{} average reward and std: {}".format(filename, evaluate_policy(policy2evaluate)))
+def evaluate_all_policies(foldername=None, filename=None):
+    if foldername != None:
+        for filename in os.listdir(foldername):
+            if filename[-3:] == 'csv':
+                policy2evaluate = get_bcpg_policy(foldername + filename)
+                print("{} average reward and std: {}".format(filename, evaluate_policy(policy2evaluate)))
+
+    elif filename != None:
+        policy2evaluate = get_bcpg_policy(filename)
+        print("{} average reward and std: {}".format(filename, evaluate_policy(policy2evaluate)))
 
     return 0
 
@@ -375,19 +371,19 @@ def smarprimer_wis(num_trajectories):
     print("mean ope's: {}.     Std of ope's: {}".format(np.mean(opes), np.std(opes)))
 
 if __name__ == "__main__":
-    EPS = 0.05
+    EPS = 0.15
 
     # df = pd.read_csv('sepsis_5000.csv')
-    smarprimer_wis(200)
-    smarprimer_wis(1000)
-    smarprimer_wis(5000)
+    # smarprimer_wis(200)
+    # smarprimer_wis(1000)
+    # smarprimer_wis(5000)
     policy, mdp, r_mat = get_mdp()
     marginalized_policy = marginalize_policy(policy, EPS)
     # evaluate_all_policies()
     # random_policy = np.ones((1440, 8)) * (1/8)
     # print("Optimal policy average reward and std: {}".format(evaluate_policy(policy)))
     print("Marginalized policy average reward with {}% random actions and std: {}".format(EPS*100, evaluate_policy(marginalized_policy),))
-    # print("Random policy average reward and std: {}".format(evaluate_policy(random_policy)))
+    # print("Random policy average rewar d and std: {}".format(evaluate_policy(random_policy)))
     # # bcpg_policy = get_bcpg_policy("all_states_with_prob_from_bcpg_model.csv")
     # # print("BCPG policy total reward: {}".format(evaluate_policy(bcpg_policy)))
     # # # all_states = get_all_states()
@@ -395,20 +391,29 @@ if __name__ == "__main__":
     # # all_states.to_csv("all_states.csv")
     #
     #
-    # dataset = create_data_set(200, marginalized_policy)
-    empirical_mdp_policy = get_empirical_mdp(marginalized_policy, 200)
-    print("Empirical MDP policy average reward on 200 and std: {}".format(
-        evaluate_policy(empirical_mdp_policy, policy_type='obs')))
+    dataset, _ = create_data_set(200, marginalized_policy, high_vol=True)
+    dataset.to_csv("high_vol_sepsis_200_w_difficulty_15_random_extreme.csv")
+    print("200 was done")
 
-    empirical_mdp_policy = get_empirical_mdp(marginalized_policy, 1000)
-    print("Empirical MDP policy average reward on 1000 and std: {}".format(
-        evaluate_policy(empirical_mdp_policy, policy_type='obs')))
+    dataset, _ = create_data_set(1000, marginalized_policy, high_vol=True)
+    dataset.to_csv("high_vol_sepsis_1000_w_difficulty_15_random_extreme.csv")
+    print("1000 was done")
 
-    empirical_mdp_policy = get_empirical_mdp(marginalized_policy, 5000)
-    print("Empirical MDP policy average reward on 5000 and std: {}".format(
-        evaluate_policy(empirical_mdp_policy, policy_type='obs')))
-
-    empirical_mdp_policy = get_empirical_mdp(marginalized_policy, 10000)
-    print("Empirical MDP policy average reward on 5000 and std: {}".format(
-        evaluate_policy(empirical_mdp_policy, policy_type='obs')))
-    # # dataset.to_csv("sepsis_5000.csv")
+    dataset, _ = create_data_set(5000, marginalized_policy, high_vol=True)
+    dataset.to_csv("high_vol_sepsis_5000_w_difficulty_15_random_extreme.csv")
+    print("5000 was done")
+    # empirical_mdp_policy = get_empirical_mdp(marginalized_policy, 200)
+    # print("Empirical MDP policy average reward on 200 and std: {}".format(
+    #     evaluate_policy(empirical_mdp_policy, policy_type='obs')))
+    #
+    # empirical_mdp_policy = get_empirical_mdp(marginalized_policy, 1000)
+    # print("Empirical MDP policy average reward on 1000 and std: {}".format(
+    #     evaluate_policy(empirical_mdp_policy, policy_type='obs')))
+    #
+    # empirical_mdp_policy = get_empirical_mdp(marginalized_policy, 5000)
+    # print("Empirical MDP policy average reward on 5000 and std: {}".format(
+    #     evaluate_policy(empirical_mdp_policy, policy_type='obs')))
+    #
+    # empirical_mdp_policy = get_empirical_mdp(marginalized_policy, 10000)
+    # print("Empirical MDP policy average reward on 5000 and std: {}".format(
+    #     evaluate_policy(empirical_mdp_policy, policy_type='obs')))

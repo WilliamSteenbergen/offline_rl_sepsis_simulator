@@ -58,7 +58,7 @@ class MDP(object):
         self.policy_array = policy_array
         self.policy_idx_type = policy_idx_type  # Used for mapping the policy to actions
 
-    def get_new_state(self, state_idx = None, idx_type = 'obs', diabetic_idx = None):
+    def get_new_state(self, state_idx = None, idx_type = 'obs', diabetic_idx = None, high_vol=False):
         '''
         use to start MDP over.  A few options:
 
@@ -94,19 +94,20 @@ class MDP(object):
         assert option is not None, "Invalid specification of new state"
 
         if option in ['random', 'random_cond_diab'] :
-            init_state = self.generate_random_state(diabetic_idx)
+            init_state, difficulty = self.generate_random_state(diabetic_idx, high_vol=high_vol)
             # Do not start in death or discharge state
             while init_state.check_absorbing_state():
-                init_state = self.generate_random_state(diabetic_idx)
+                # print("we generated an absorbing state")
+                init_state, difficulty = self.generate_random_state(diabetic_idx, high_vol=high_vol)
         else:
             # Note that diabetic_idx will be ignored if idx_type = 'full'
             init_state = State(
                     state_idx=state_idx, idx_type=idx_type,
                     diabetic_idx=diabetic_idx)
 
-        return init_state
+        return init_state, difficulty
 
-    def generate_random_state(self, diabetic_idx=None):
+    def generate_random_state(self, diabetic_idx=None, high_vol=False):
         # Note that we will condition on diabetic idx if provided
         if diabetic_idx is None:
             diabetic_idx = np.random.binomial(1, self.p_diabetes)
@@ -123,14 +124,58 @@ class MDP(object):
         else:
             glucose_state = np.random.choice(np.arange(5), \
                 p=np.array([.01, .05, .15, .6, .19]))
+
+        states = {}
+        difficulty = None
+        if high_vol:
+            easy = np.random.choice(np.array([True, False]), p=np.array([0.2, 0.8]))
+            # All normal except for one
+            states['hr_state'] = 1  # normal
+            states['sysbp_state'] = 1  # normal
+            states['percoxyg_state'] = 1  # normal
+            states['glucose_state'] = 2  # normal
+            temp = ['hr_state', "sysbp_state", "percoxyg_state", "glucose_state"]
+            if easy:
+                diabetic_idx = 0
+                difficulty = "easy"
+                #change one:
+                abnormal_idx = np.random.choice(np.arange(4), p=np.array([0.25, 0.25,0.25,0.25]))
+                var = temp[abnormal_idx]
+                if var == 'percoxyg_state':
+                    states[var] -= 1
+                else:
+                    states[var] += 1
+
+            else:
+                diabetic_idx = 1
+                difficulty = "hard"
+                # change three (will generate a bunch of absorbing states):
+                previous_states = ['']
+                var = ''
+                for i in range(2):
+                    while var in previous_states:
+                        abnormal_idx = np.random.choice(np.arange(4), p=np.array([0.25, 0.25, 0.25, 0.25]))
+                        var = temp[abnormal_idx]
+                    if var == 'percoxyg_state':
+                        states[var] -= 1
+                    else:
+                        states[var] += 1
+                    if var != "glucose_state":
+                        previous_states.append(var)
+
+            hr_state = states['hr_state']
+            sysbp_state = states['sysbp_state']
+            percoxyg_state = states['percoxyg_state']
+            glucose_state = states['glucose_state']
+
         antibiotic_state = 0
         vaso_state = 0
         vent_state = 0
 
         state_categs = [hr_state, sysbp_state, percoxyg_state,
                 glucose_state, antibiotic_state, vaso_state, vent_state]
-
-        return State(state_categs=state_categs, diabetic_idx=diabetic_idx)
+        # print(state_categs)
+        return State(state_categs=state_categs, diabetic_idx=diabetic_idx), difficulty
 
     def transition_antibiotics_on(self):
         '''

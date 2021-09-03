@@ -20,7 +20,8 @@ class DataGenerator(object):
 
     def simulate(self, num_iters, max_num_steps,
             policy=None, policy_idx_type='full', p_diabetes=0.2,
-            output_state_idx_type='obs', use_tqdm=False, tqdm_desc='', splits=False, split_df=None):
+            output_state_idx_type='obs', use_tqdm=False, tqdm_desc='',
+                 splits=False, split_df=None, high_vol=False):
         '''
         policy is an array of probabilities
         '''
@@ -53,9 +54,11 @@ class DataGenerator(object):
         else:
             raise NotImplementedError()
 
+        difficulties = []
         for itr in tqdm(range(num_iters), disable=not(use_tqdm), desc=tqdm_desc):
             # MDP will generate the diabetes index as well
-            mdp.state = mdp.get_new_state()
+            mdp.state, difficulty = mdp.get_new_state(high_vol=high_vol)
+            difficulties.append(difficulty)
             this_diabetic_idx = mdp.state.diabetic_idx
             iter_component[itr, :] = this_diabetic_idx  # Never changes
             iter_states[itr, 0, 0] = mdp.state.get_state_idx(
@@ -85,6 +88,7 @@ class DataGenerator(object):
                                this_from_state_idx, this_to_state_idx] += step_reward
 
                 else:
+
                     emp_tx_mat[this_action_idx,
                                this_from_state_idx, this_to_state_idx] += 1
                     emp_r_mat[this_action_idx,
@@ -98,4 +102,4 @@ class DataGenerator(object):
             if step == max_num_steps-1:
                 iter_lengths[itr, 0] = max_num_steps
 
-        return iter_states, iter_actions, iter_lengths, iter_rewards, iter_component, emp_tx_mat, emp_r_mat
+        return iter_states, iter_actions, iter_lengths, iter_rewards, iter_component, emp_tx_mat, emp_r_mat, difficulties
